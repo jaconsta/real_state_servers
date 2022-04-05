@@ -1,14 +1,11 @@
 use std::env;
 
-use mongodb::{bson::{doc, Document}, options::ClientOptions, Client, Collection};
+use mongodb::{bson::doc, options::ClientOptions, Client, Collection};
 use std::convert::Infallible;
 use warp::{Filter};
-// use futures::stream::TryStreamExt;
 
-//use crate::lib::structs::{ user::User,  typed::{ Result } };
 use crate::lib::constants;
 
-// const DB_NAME: String = String::from("real_state_game");  // : &str = "real_state_game";
 
 #[derive(Clone, Debug)]
 pub struct DB {
@@ -46,18 +43,17 @@ pub fn with_db(db: DB) -> impl Filter<Extract = (DB,), Error = Infallible> + Clo
 }
 
 
-// #[derive(Clone, Debug)]
-// pub struct UserModel {
-//     pub db: DB,
-//     pub table_name: String
-// }
-
 pub mod user_model {
-    // use mongodb::{bson::{Document}};
     use futures::stream::TryStreamExt;
+    use mongodb::{bson::doc};
+    use sha2::{Sha256, Digest};
+    use base64ct::{Base64, Encoding};
+    use rand::{thread_rng, Rng};
+    use rand::distributions::Alphanumeric;
 
-    use crate::lib::structs::{ user::User,  typed::Result };
+    use crate::lib::structs::{ user::User, typed::Result, auth::UserLogin };
     use super::DB;
+    use super::constants::HASH_SALT;
 
     pub async fn fetch_all(db: DB) -> Result<Vec<User>>{
         let mut cursor = db.get_collection::<User>("user")
@@ -83,8 +79,34 @@ pub mod user_model {
         Ok(users)
     }
 
-    pub async fn create_one(db:DB, user: User) -> Result<bool> {
-        let inserted = db.get_collection("user").insert_one(user, None).await;
+
+    pub async fn fetch_by_username(db:DB, username: &str) -> User {
+        let mut cursor = db.get_collection::<User>("user")
+            .find(doc! {"username": username}, None)
+            .await.unwrap();
+        let user: User = match cursor.try_next().await {
+            Ok(x) => {
+                match x {
+                    Some(d) => { 
+                        return d
+                    },
+                    None => { User{ id: None, username: String::from(""), first_name: None, last_name: None, email: None, phone: None, password: None ,pss_hash: None} }
+                }
+            },
+            _ => { User{ id: None, username: String::from(""), first_name: None, last_name: None, email: None, phone: None, password: None ,pss_hash: None} }
+        };
+        user
+    }
+
+    pub async fn create_one(db:DB, user: &mut User) -> Result<bool> {
+        let custom_hash = super::user_model::hash_generator();
+        user.password = match &user.password {
+            Some(password) => Some(super::user_model::password_hasher(&password, &custom_hash)),
+            _ => None  // Should throw an error
+        };
+        user.pss_hash = Some(custom_hash);
+        
+        let inserted = db.get_collection::<User>("user").insert_one(user, None).await;
 
         match inserted {
             Ok(_) => Ok(true),
@@ -92,13 +114,42 @@ pub mod user_model {
         }
     }
 
-    // pub fn doc_factory(doc: &Document) -> User {
-    //     let name = doc.get_str("name").unwrap();
+    // password_hasher("I am a secure password asdf", "SuperSecureSalt");
+    fn password_hasher (password: &str, salt_string: &str) -> String {
+        // https://www.cs.rit.edu/~ark/20090927/Round2Candidates/Shabal.pdf
+        // Probably check https://github.com/RustCrypto/password-hashes
+        let hasher = Sha256::new()
+            .chain_update(salt_string.as_bytes())
+            .chain_update(HASH_SALT)
+            .chain_update(password)
+            .finalize();
+        let string_hash = Base64::encode_string(&hasher);
+        string_hash
+    }
+    
+    fn hash_generator () -> String  {
+        let rand_string: String = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(30)
+        .map(char::from)
+        .collect();
+        rand_string
+    }
 
-    //     let user = User {
-    //         name: name.to_owned()
-    //     };
+    pub async fn user_validator (db: DB, data: UserLogin) -> Result<User> {
+        let mut user = super::user_model::fetch_by_username(db, &data.username).await;
 
-    //     user
-    // }
+        if user.username == "".to_string() {
+            return Ok(User{ id: None, username: String::from(""), first_name: None, last_name: None, email: None, phone: None, password: None ,pss_hash: None});
+        }
+
+        let guess_password =  super::user_model::password_hasher(&data.password, &user.pss_hash.clone().unwrap());
+
+        if guess_password.eq(user.password.as_ref().unwrap()) {
+            user.password = None;
+            return Ok(user.to_owned()) 
+        }
+        Ok(User{ id: None, username: String::from(""), first_name: None, last_name: None, email: None, phone: None, password: None ,pss_hash: None})
+        
+    }
 }

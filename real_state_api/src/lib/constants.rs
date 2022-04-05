@@ -9,3 +9,4 @@
 pub static SERVER_URL: &'static str = "127.0.0.1:8080";
 pub const DB_URL: &'static str = "mongodb://game_api:game_api@192.168.0.23:27017/real_state_game?w=majority";
 pub const DB_NAME: &'static str = "real_state_game";
+pub const HASH_SALT: &'static str = "EBjcJltLztMfObY7fnNpJ2SkkamUdW";

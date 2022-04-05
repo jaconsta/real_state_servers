@@ -21,7 +21,6 @@ async fn main() {
     server.await
 }
 
-
 async fn connect_to_db() -> mongodb::error::Result<Client> {
     let addr = env::var("MONGO_URL")
         .unwrap_or_else(|_err| String::from(constants::DB_URL));
